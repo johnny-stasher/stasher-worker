@@ -1,0 +1,10 @@
+{
+  "name": "stashed-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for stashed.info API",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  }
+}

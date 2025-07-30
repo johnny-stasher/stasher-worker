@@ -1,0 +1,11 @@
+name = "stasher-api"
+main = "worker.ts"
+compatibility_date = "2023-05-18"
+account_id = "5315a5297c25808a48518923d6fe9d90"
+
+[observability]
+enabled = true
+
+[[kv_namespaces]]
+binding = "STASHED_KV"
+id = "ca3d3503c98e4dcbbedfa776ce37f208"
