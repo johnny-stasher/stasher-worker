@@ -1,6 +1,6 @@
 # Stasher Worker
 
-Cloudflare Worker API backend for the [Stasher CLI](https://github.com/johnny-stasher/stasher) - secure secret sharing with burn-after-read.
+Cloudflare Worker API backend for the [Stasher CLI](https://github.com/johnny-stasher/stasher) - secure secret sharing with burn-after-reading.
 
 ## Features
 
