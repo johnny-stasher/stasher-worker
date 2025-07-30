@@ -14,7 +14,6 @@ Cloudflare Worker API backend for the [Stasher CLI](https://github.com/johnny-st
 ```
 stasher-worker/
 ├── worker.ts         # Main worker entry point (TypeScript)
-├── worker.js         # Compiled JavaScript (legacy)
 ├── wrangler.toml     # Cloudflare Worker configuration  
 ├── package.json      # Project metadata
 ├── README.md         # Documentation

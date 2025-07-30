@@ -1,4 +1,4 @@
-// Cloudflare Worker types
+// Cloudflare Worker environment
 interface Env {
   STASHED_KV: KVNamespace;
 }
@@ -30,7 +30,7 @@ interface ErrorResponse {
   requestId: string;
 }
 
-export default {
+const worker: ExportedHandler<Env> = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -187,3 +187,5 @@ export default {
     }
   }
 };
+
+export default worker;

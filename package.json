@@ -1,10 +1,22 @@
 {
-  "name": "stashed-worker",
+  "name": "stasher-worker",
   "version": "1.0.0",
-  "description": "Cloudflare Worker for stashed.info API",
-  "main": "worker.js",
+  "description": "Cloudflare Worker API backend for Stasher CLI",
+  "main": "worker.ts",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
-  }
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20230712.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "cloudflare-worker",
+    "secret-sharing", 
+    "encryption",
+    "cli"
+  ],
+  "author": "johnny-stasher",
+  "license": "MIT"
 }
