@@ -1,6 +1,8 @@
 // Cloudflare Worker environment
 interface Env {
   STASHED_KV: KVNamespace;
+  GITHUB_TOKEN?: string;
+  CF_PAGES_COMMIT_SHA?: string;
 }
 
 // API request/response types
@@ -28,6 +30,21 @@ interface UnstashResponse {
 interface ErrorResponse {
   error: string;
   requestId: string;
+}
+
+interface VerifyResponse {
+  cloudflare: {
+    commit: string;
+    deployedAt: string;
+  };
+  github: {
+    commit: string;
+    message: string;
+    date: string;
+  };
+  repository: string;
+  status: 'VERIFIED' | 'MISMATCH' | 'UNKNOWN';
+  match: boolean;
 }
 
 const worker: ExportedHandler<Env> = {
@@ -109,10 +126,10 @@ const worker: ExportedHandler<Env> = {
         
         // Validate UUID
         if (!id) {
-          return json({ error: 'Missing UUID', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Missing uuid', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         if (!uuidRegex.test(id)) {
-          return json({ error: 'Invalid UUID format. Expected: xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Invalid uuid format', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
         const key = `secret:${id}`;
@@ -150,10 +167,10 @@ const worker: ExportedHandler<Env> = {
         
         // Validate UUID
         if (!id) {
-          return json({ error: 'Missing UUID', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Missing uuid', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         if (!uuidRegex.test(id)) {
-          return json({ error: 'Invalid UUID format. Expected: xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Invalid uuid format', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
         // Check if key exists before deleting
@@ -168,6 +185,93 @@ const worker: ExportedHandler<Env> = {
         await env.STASHED_KV.delete(key);
 
         return json({ status: 'deleted', id } as UnstashResponse);
+      }
+
+      // GET /verify - compare deployed commit with GitHub
+      if (path === '/verify' && request.method === 'GET') {
+        // Check if CF_PAGES_COMMIT_SHA is available
+        if (!env.CF_PAGES_COMMIT_SHA) {
+          return json({ error: 'CF_PAGES_COMMIT_SHA missing — is this deployed via GitHub?', requestId } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
+        }
+
+        const cloudflareCommit = env.CF_PAGES_COMMIT_SHA;
+        const deployedAt = new Date().toISOString(); // Current time as proxy for deployment time
+        const repository = 'https://github.com/stasher-dev/stasher-worker';
+
+        try {
+          // Fetch latest commit from GitHub API
+          const githubHeaders: Record<string, string> = {
+            'User-Agent': 'stasher-worker'
+          };
+          
+          // Add auth header if token is available (for higher rate limits)
+          if (env.GITHUB_TOKEN) {
+            githubHeaders['Authorization'] = `Bearer ${env.GITHUB_TOKEN}`;
+          }
+
+          const githubResponse = await fetch(
+            'https://api.github.com/repos/stasher-dev/stasher-worker/commits/main',
+            { headers: githubHeaders }
+          );
+
+          if (!githubResponse.ok) {
+            // GitHub API failed - return partial info
+            return json({
+              cloudflare: {
+                commit: cloudflareCommit.substring(0, 7),
+                deployedAt
+              },
+              github: {
+                commit: 'unknown',
+                message: 'GitHub API unavailable',
+                date: 'unknown'
+              },
+              repository,
+              status: 'UNKNOWN',
+              match: false
+            } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
+          }
+
+          const githubData = await githubResponse.json() as any;
+          const githubCommit = githubData.sha;
+          
+          // Compare full SHAs for security, display short ones for UX
+          const isMatch = githubCommit === cloudflareCommit;
+          
+          return json({
+            cloudflare: {
+              commit: cloudflareCommit.substring(0, 7),
+              deployedAt
+            },
+            github: {
+              commit: githubCommit.substring(0, 7),
+              message: githubData.commit.message,
+              date: githubData.commit.author.date
+            },
+            repository,
+            status: isMatch ? 'VERIFIED' : 'MISMATCH',
+            match: isMatch
+          } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
+
+        } catch (error) {
+          console.error(`[${requestId}] GitHub API Error:`, error);
+          
+          // Return partial Cloudflare info on error
+          return json({
+            cloudflare: {
+              commit: cloudflareCommit.substring(0, 7),
+              deployedAt
+            },
+            github: {
+              commit: 'error',
+              message: 'Failed to fetch from GitHub',
+              date: 'unknown'
+            },
+            repository,
+            status: 'UNKNOWN',
+            match: false
+          } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
+        }
       }
 
       // 404 for all other routes
