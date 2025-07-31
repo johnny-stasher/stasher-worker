@@ -186,17 +186,16 @@ const worker: ExportedHandler<Env> = {
       }
 
       // GET /verify - return deployment info
-      if (path === '/verify' && request.method === 'GET') {
-        const deployedAt = new Date().toISOString();
-        
+      if (path === '/verify') {
+        console.log('ENV DUMP:', JSON.stringify(env, null, 2));
         return json({
           commit: env.WORKERS_CI_COMMIT_SHA || 'unknown',
-          deployedAt,
+          deployedAt: new Date().toISOString(),
           buildUuid: env.WORKERS_CI_BUILD_UUID,
           branch: env.WORKERS_CI_BRANCH,
           ci: env.CI === 'true',
           workersCI: env.WORKERS_CI === '1'
-        } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
+        });
       }
 
       // 404 for all other routes
