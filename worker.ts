@@ -37,22 +37,12 @@ interface ErrorResponse {
 }
 
 interface VerifyResponse {
-  cloudflare: {
-    commit: string;
-    deployedAt: string;
-    buildUuid?: string;
-    branch?: string;
-    ci: boolean;
-    workersCI: boolean;
-  };
-  github: {
-    commit: string;
-    message: string;
-    date: string;
-  };
-  repository: string;
-  status: 'VERIFIED' | 'MISMATCH' | 'UNKNOWN';
-  match: boolean;
+  commit: string;
+  deployedAt: string;
+  buildUuid?: string;
+  branch?: string;
+  ci: boolean;
+  workersCI: boolean;
 }
 
 const worker: ExportedHandler<Env> = {
@@ -195,103 +185,18 @@ const worker: ExportedHandler<Env> = {
         return json({ status: 'deleted', id } as UnstashResponse);
       }
 
-      // GET /verify - compare deployed commit with GitHub
+      // GET /verify - return deployment info
       if (path === '/verify' && request.method === 'GET') {
-        // Check if WORKERS_CI_COMMIT_SHA is available
-        if (!env.WORKERS_CI_COMMIT_SHA) {
-          return json({ error: 'WORKERS_CI_COMMIT_SHA missing — deployment info not available', requestId } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
-        }
-
-        const cloudflareCommit = env.WORKERS_CI_COMMIT_SHA;
         const deployedAt = new Date().toISOString();
-        const repository = 'https://github.com/stasher-dev/stasher-worker';
-
-        try {
-          // Fetch latest commit from GitHub API
-          const githubHeaders: Record<string, string> = {
-            'User-Agent': 'stasher-worker'
-          };
-          
-          // Add auth header if token is available (for higher rate limits)
-          if (env.GITHUB_TOKEN) {
-            githubHeaders['Authorization'] = `Bearer ${env.GITHUB_TOKEN}`;
-          }
-
-          const githubResponse = await fetch(
-            'https://api.github.com/repos/stasher-dev/stasher-worker/commits/main',
-            { headers: githubHeaders }
-          );
-
-          if (!githubResponse.ok) {
-            // GitHub API failed - return partial info
-            return json({
-              cloudflare: {
-                commit: cloudflareCommit.substring(0, 7),
-                deployedAt,
-                buildUuid: env.WORKERS_CI_BUILD_UUID,
-                branch: env.WORKERS_CI_BRANCH,
-                ci: env.CI === 'true',
-                workersCI: env.WORKERS_CI === '1'
-              },
-              github: {
-                commit: 'unknown',
-                message: 'GitHub API unavailable',
-                date: 'unknown'
-              },
-              repository,
-              status: 'UNKNOWN',
-              match: false
-            } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
-          }
-
-          const githubData = await githubResponse.json() as any;
-          const githubCommit = githubData.sha;
-          
-          // Compare full SHAs for security, display short ones for UX
-          const isMatch = githubCommit === cloudflareCommit;
-          
-          return json({
-            cloudflare: {
-              commit: cloudflareCommit.substring(0, 7),
-              deployedAt,
-              buildUuid: env.WORKERS_CI_BUILD_UUID,
-              branch: env.WORKERS_CI_BRANCH,
-              ci: env.CI === 'true',
-              workersCI: env.WORKERS_CI === '1'
-            },
-            github: {
-              commit: githubCommit.substring(0, 7),
-              message: githubData.commit.message,
-              date: githubData.commit.author.date
-            },
-            repository,
-            status: isMatch ? 'VERIFIED' : 'MISMATCH',
-            match: isMatch
-          } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
-
-        } catch (error) {
-          console.error(`[${requestId}] GitHub API Error:`, error);
-          
-          // Return partial Cloudflare info on error
-          return json({
-            cloudflare: {
-              commit: cloudflareCommit.substring(0, 7),
-              deployedAt,
-              buildUuid: env.WORKERS_CI_BUILD_UUID,
-              branch: env.WORKERS_CI_BRANCH,
-              ci: env.CI === 'true',
-              workersCI: env.WORKERS_CI === '1'
-            },
-            github: {
-              commit: 'error',
-              message: 'Failed to fetch from GitHub',
-              date: 'unknown'
-            },
-            repository,
-            status: 'UNKNOWN',
-            match: false
-          } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
-        }
+        
+        return json({
+          commit: env.WORKERS_CI_COMMIT_SHA || 'unknown',
+          deployedAt,
+          buildUuid: env.WORKERS_CI_BUILD_UUID,
+          branch: env.WORKERS_CI_BRANCH,
+          ci: env.CI === 'true',
+          workersCI: env.WORKERS_CI === '1'
+        } as VerifyResponse, 200, { 'Cache-Control': 'no-store' });
       }
 
       // 404 for all other routes
