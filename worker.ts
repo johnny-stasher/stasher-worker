@@ -2,7 +2,11 @@
 interface Env {
   STASHED_KV: KVNamespace;
   GITHUB_TOKEN?: string;
-  WORKERS_DEPLOYMENT_COMMIT_HASH?: string;
+  CI?: string;
+  WORKERS_CI?: string;
+  WORKERS_CI_BUILD_UUID?: string;
+  WORKERS_CI_COMMIT_SHA?: string;
+  WORKERS_CI_BRANCH?: string;
 }
 
 // API request/response types
@@ -36,6 +40,10 @@ interface VerifyResponse {
   cloudflare: {
     commit: string;
     deployedAt: string;
+    buildUuid?: string;
+    branch?: string;
+    ci: boolean;
+    workersCI: boolean;
   };
   github: {
     commit: string;
@@ -190,11 +198,11 @@ const worker: ExportedHandler<Env> = {
       // GET /verify - compare deployed commit with GitHub
       if (path === '/verify' && request.method === 'GET') {
         // Check if WORKERS_CI_COMMIT_SHA is available
-        if (!env.WORKERS_DEPLOYMENT_COMMIT_HASH) {
+        if (!env.WORKERS_CI_COMMIT_SHA) {
           return json({ error: 'WORKERS_CI_COMMIT_SHA missing — deployment info not available', requestId } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
         }
 
-        const cloudflareCommit = env.WORKERS_DEPLOYMENT_COMMIT_HASH;
+        const cloudflareCommit = env.WORKERS_CI_COMMIT_SHA;
         const deployedAt = new Date().toISOString();
         const repository = 'https://github.com/stasher-dev/stasher-worker';
 
@@ -219,7 +227,11 @@ const worker: ExportedHandler<Env> = {
             return json({
               cloudflare: {
                 commit: cloudflareCommit.substring(0, 7),
-                deployedAt
+                deployedAt,
+                buildUuid: env.WORKERS_CI_BUILD_UUID,
+                branch: env.WORKERS_CI_BRANCH,
+                ci: env.CI === 'true',
+                workersCI: env.WORKERS_CI === '1'
               },
               github: {
                 commit: 'unknown',
@@ -241,7 +253,11 @@ const worker: ExportedHandler<Env> = {
           return json({
             cloudflare: {
               commit: cloudflareCommit.substring(0, 7),
-              deployedAt
+              deployedAt,
+              buildUuid: env.WORKERS_CI_BUILD_UUID,
+              branch: env.WORKERS_CI_BRANCH,
+              ci: env.CI === 'true',
+              workersCI: env.WORKERS_CI === '1'
             },
             github: {
               commit: githubCommit.substring(0, 7),
@@ -260,7 +276,11 @@ const worker: ExportedHandler<Env> = {
           return json({
             cloudflare: {
               commit: cloudflareCommit.substring(0, 7),
-              deployedAt
+              deployedAt,
+              buildUuid: env.WORKERS_CI_BUILD_UUID,
+              branch: env.WORKERS_CI_BRANCH,
+              ci: env.CI === 'true',
+              workersCI: env.WORKERS_CI === '1'
             },
             github: {
               commit: 'error',
