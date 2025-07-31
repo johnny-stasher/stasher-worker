@@ -2,11 +2,6 @@
 interface Env {
   STASHED_KV: KVNamespace;
   GITHUB_TOKEN?: string;
-  CI?: string;
-  WORKERS_CI?: string;
-  WORKERS_CI_BUILD_UUID?: string;
-  WORKERS_CI_COMMIT_SHA?: string;
-  WORKERS_CI_BRANCH?: string;
 }
 
 // API request/response types
@@ -36,14 +31,6 @@ interface ErrorResponse {
   requestId: string;
 }
 
-interface VerifyResponse {
-  commit: string;
-  deployedAt: string;
-  buildUuid?: string;
-  branch?: string;
-  ci: boolean;
-  workersCI: boolean;
-}
 
 const worker: ExportedHandler<Env> = {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -185,18 +172,6 @@ const worker: ExportedHandler<Env> = {
         return json({ status: 'deleted', id } as UnstashResponse);
       }
 
-      // GET /verify - return deployment info
-      if (path === '/verify') {
-        console.log('ENV DUMP:', JSON.stringify(env, null, 2));
-        return json({
-          commit: env.WORKERS_CI_COMMIT_SHA || 'unknown',
-          deployedAt: new Date().toISOString(),
-          buildUuid: env.WORKERS_CI_BUILD_UUID,
-          branch: env.WORKERS_CI_BRANCH,
-          ci: env.CI === 'true',
-          workersCI: env.WORKERS_CI === '1'
-        });
-      }
 
       // 404 for all other routes
       return json({ error: 'Not found', requestId } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
