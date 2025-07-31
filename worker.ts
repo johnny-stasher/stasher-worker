@@ -2,9 +2,7 @@
 interface Env {
   STASHED_KV: KVNamespace;
   GITHUB_TOKEN?: string;
-  WORKERS_DEPLOYMENT_COMMIT_HASH?: string;
-  WORKERS_DEPLOYMENT_TIMESTAMP?: string;
-  WORKERS_PROJECT_NAME?: string;
+  WORKERS_CI_COMMIT_SHA?: string;
 }
 
 // API request/response types
@@ -191,13 +189,13 @@ const worker: ExportedHandler<Env> = {
 
       // GET /verify - compare deployed commit with GitHub
       if (path === '/verify' && request.method === 'GET') {
-        // Check if WORKERS_DEPLOYMENT_COMMIT_HASH is available
-        if (!env.WORKERS_DEPLOYMENT_COMMIT_HASH) {
-          return json({ error: 'WORKERS_DEPLOYMENT_COMMIT_HASH missing — deployment info not available', requestId } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
+        // Check if WORKERS_CI_COMMIT_SHA is available
+        if (!env.WORKERS_CI_COMMIT_SHA) {
+          return json({ error: 'WORKERS_CI_COMMIT_SHA missing — deployment info not available', requestId } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
         }
 
-        const cloudflareCommit = env.WORKERS_DEPLOYMENT_COMMIT_HASH;
-        const deployedAt = env.WORKERS_DEPLOYMENT_TIMESTAMP || new Date().toISOString();
+        const cloudflareCommit = env.WORKERS_CI_COMMIT_SHA;
+        const deployedAt = new Date().toISOString();
         const repository = 'https://github.com/stasher-dev/stasher-worker';
 
         try {
