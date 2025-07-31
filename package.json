@@ -4,6 +4,7 @@
   "description": "Cloudflare Worker API backend for Stasher CLI",
   "main": "worker.ts",
   "scripts": {
+    "build": "echo 'no build step needed'",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
