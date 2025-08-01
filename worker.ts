@@ -37,16 +37,36 @@ const worker: ExportedHandler<Env> = {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // CORS headers for cross-origin requests from any domain
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400'
+    };
+
+    // Handle preflight OPTIONS requests
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders
+      });
+    }
+
     try {
       // Generate unique request ID for observability/debugging
       const requestId = crypto.randomUUID();
       console.log(`[${requestId}] ${request.method} ${path}`);
 
-      // Shared response helper
+      // Shared response helper with CORS headers
       const json = (data: any, status: number = 200, extraHeaders: Record<string, string> = {}): Response =>
         new Response(JSON.stringify(data), {
           status,
-          headers: { 'Content-Type': 'application/json', ...extraHeaders }
+          headers: { 
+            'Content-Type': 'application/json', 
+            ...corsHeaders,  // Include CORS headers in all responses
+            ...extraHeaders 
+          }
         });
 
       // UUID v4 validation regex (aligned with CLI)
@@ -184,7 +204,10 @@ const worker: ExportedHandler<Env> = {
         JSON.stringify({ error: 'Internal server error', requestId: fallbackRequestId } as ErrorResponse),
         { 
           status: 500,
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 
+            'Content-Type': 'application/json',
+            ...corsHeaders  // Include CORS headers in error responses too
+          }
         }
       );
     }
