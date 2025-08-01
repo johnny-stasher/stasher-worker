@@ -4,10 +4,10 @@ Cloudflare Worker API backend for the [Stasher CLI](https://github.com/johnny-st
 
 ## Features
 
-- 🔐 **Zero-knowledge storage** - Only encrypted ciphertext stored
-- 🔥 **Burn-after-read** - Stash deleted after first retrieval  
-- ⏰ **10-minute TTL** - All stashes expire automatically
-- 🚀 **Edge deployment** - Global Cloudflare network
+- **Zero-knowledge storage** - Only encrypted ciphertext stored
+- **Burn-after-read** - Stash deleted after first retrieval  
+- **10-minute TTL** - All stashes expire automatically
+- **Edge deployment** - Global Cloudflare network
 
 ## Project Structure
 
