@@ -1,6 +1,6 @@
-# Stasher Worker
+# Stasher API
 
-Cloudflare Worker API backend for the [Stasher CLI](https://github.com/stasher-cli/stasher) - secure secret sharing with burn-after-read.
+Cloudflare Worker API backend for the [Stasher CLI](https://github.com/stasher-dev/stasher-cli) - secure secret sharing with burn-after-read.
 
 ## Features
 
@@ -51,7 +51,7 @@ The system now uses a hybrid architecture combining **KV for storage** and **Dur
 ## Project Structure
 
 ```
-stasher-worker/
+stasher-api/
 ├── worker.ts         # Main worker with hybrid KV+DO architecture
 ├── wrangler.toml     # Cloudflare Worker + Durable Objects config
 ├── package.json      # Project metadata
@@ -59,6 +59,11 @@ stasher-worker/
 ├── README.md         # Documentation
 └── LICENSE           # MIT License
 ```
+## Related Projects
+
+- **[Stasher CLI](https://github.com/stasher-dev/stasher-cli)** - Terminal version (`npm install -g stasher-cli` or `npx`)
+- **[Stasher App](https://github.com/stasher-dev/stasher-app)** - Browser/web interface with bookmarklet support
+
 ## License
 
 MIT
