@@ -1,6 +1,7 @@
 // Cloudflare Worker environment
 interface Env {
   STASHED_KV: KVNamespace;
+  STASHER_DO: DurableObjectNamespace;
   GITHUB_TOKEN?: string;
 }
 
@@ -104,6 +105,22 @@ const worker: ExportedHandler<Env> = {
         // Generate UUID
         const id = crypto.randomUUID();
         
+        // Create Durable Object for this stash
+        const doId = env.STASHER_DO.idFromName(id);
+        const doStub = env.STASHER_DO.get(doId);
+        
+        // Create timestamp record in DO
+        const timestamp = Math.floor(Date.now() / 1000);
+        const doResponse = await doStub.fetch(new Request('https://stasher.internal/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timestamp })
+        }));
+        
+        if (!doResponse.ok) {
+          return json({ error: 'Failed to create stash record', requestId } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
+        }
+        
         // Store in KV
         const dataToStore = {
           iv: body.iv,
@@ -137,6 +154,19 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Invalid uuid format', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
+        // Check Durable Object first - atomic consume operation
+        const doId = env.STASHER_DO.idFromName(id);
+        const doStub = env.STASHER_DO.get(doId);
+        
+        const doResponse = await doStub.fetch(new Request('https://stasher.internal/consume', {
+          method: 'POST'
+        }));
+        
+        if (!doResponse.ok) {
+          return json({ error: 'Stash not found', requestId } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
+        }
+        
+        // DO gave permission, now get from KV
         const key = `secret:${id}`;
         const data = await env.STASHED_KV.get(key);
         
@@ -178,15 +208,20 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Invalid uuid format', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
-        // Check if key exists before deleting
-        const key = `secret:${id}`;
-        const data = await env.STASHED_KV.get(key);
+        // Check Durable Object first - atomic delete operation
+        const doId = env.STASHER_DO.idFromName(id);
+        const doStub = env.STASHER_DO.get(doId);
         
-        if (!data) {
+        const doResponse = await doStub.fetch(new Request('https://stasher.internal/', {
+          method: 'DELETE'
+        }));
+        
+        if (!doResponse.ok) {
           return json({ error: 'Stash not found', requestId } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
-
-        // Delete the secret
+        
+        // DO confirmed deletion, now clean up KV
+        const key = `secret:${id}`;
         await env.STASHED_KV.delete(key);
 
         return json({ status: 'deleted', id } as UnstashResponse);
@@ -213,5 +248,42 @@ const worker: ExportedHandler<Env> = {
     }
   }
 };
+
+// Durable Object for atomic stash operations
+export class StasherDO {
+  constructor(private state: DurableObjectState) {}
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    
+    if (request.method === 'POST' && url.pathname === '/create') {
+      const body: { timestamp: number } = await request.json();
+      await this.state.storage.put('created_at', body.timestamp);
+      return new Response(JSON.stringify({ status: 'created' }));
+    }
+    
+    if (request.method === 'POST' && url.pathname === '/consume') {
+      const createdAt = await this.state.storage.get('created_at');
+      if (!createdAt) {
+        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+      }
+      
+      await this.state.storage.delete('created_at');
+      return new Response(JSON.stringify({ status: 'consumed', created_at: createdAt }));
+    }
+    
+    if (request.method === 'DELETE') {
+      const createdAt = await this.state.storage.get('created_at');
+      if (!createdAt) {
+        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+      }
+      
+      await this.state.storage.delete('created_at');
+      return new Response(JSON.stringify({ status: 'deleted' }));
+    }
+    
+    return new Response('Not found', { status: 404 });
+  }
+}
 
 export default worker;
