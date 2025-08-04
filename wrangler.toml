@@ -9,3 +9,11 @@ enabled = true
 [[kv_namespaces]]
 binding = "STASHED_KV"
 id = "ca3d3503c98e4dcbbedfa776ce37f208"
+
+[[durable_objects.bindings]]
+name = "STASHER_DO"
+class_name = "StasherDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = [ "StasherDO" ]
