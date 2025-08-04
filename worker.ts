@@ -29,7 +29,6 @@ interface UnstashResponse {
 
 interface ErrorResponse {
   error: string;
-  requestId: string;
 }
 
 
@@ -55,9 +54,6 @@ const worker: ExportedHandler<Env> = {
     }
 
     try {
-      // Generate unique request ID for observability/debugging
-      const requestId = crypto.randomUUID();
-      console.log(`[${requestId}] ${request.method} ${path}`);
 
       // Shared response helper with CORS headers
       const json = (data: any, status: number = 200, extraHeaders: Record<string, string> = {}): Response =>
@@ -81,25 +77,25 @@ const worker: ExportedHandler<Env> = {
       if (path === '/enstash' && request.method === 'POST') {
         // Validate Content-Type
         if (!request.headers.get('content-type')?.includes('application/json')) {
-          return json({ error: 'Expected Content-Type: application/json', requestId } as ErrorResponse, 415, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Expected Content-Type: application/json' } as ErrorResponse, 415, { 'Cache-Control': 'no-store' });
         }
 
         // Check raw payload size first
         const raw = await request.text();
         if (raw.length > MAX_PAYLOAD_SIZE) {
-          return json({ error: `Payload too large (max ${MAX_PAYLOAD_SIZE} bytes)`, requestId } as ErrorResponse, 413, { 'Cache-Control': 'no-store' });
+          return json({ error: `Payload too large (max ${MAX_PAYLOAD_SIZE} bytes)` } as ErrorResponse, 413, { 'Cache-Control': 'no-store' });
         }
 
         let body: EnstashRequest;
         try {
           body = JSON.parse(raw) as EnstashRequest;
         } catch {
-          return json({ error: 'Invalid JSON', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Invalid JSON' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
               
         // Validate required fields
         if (!body.iv || !body.tag || !body.ciphertext) {
-          return json({ error: 'Missing required fields: iv, tag, ciphertext', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Missing required fields: iv, tag, ciphertext' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
         // Generate UUID
@@ -118,7 +114,7 @@ const worker: ExportedHandler<Env> = {
         }));
         
         if (!doResponse.ok) {
-          return json({ error: 'Failed to create stash record', requestId } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Failed to create stash record' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
         }
         
         // Store in KV
@@ -141,17 +137,17 @@ const worker: ExportedHandler<Env> = {
         
         // Ensure proper path structure
         if (segments.length !== 2) {
-          return json({ error: 'Malformed path', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Malformed path' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
         const id = segments[1];
         
         // Validate UUID
         if (!id) {
-          return json({ error: 'Missing uuid', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Missing uuid' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         if (!uuidRegex.test(id)) {
-          return json({ error: 'Invalid uuid format', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Invalid uuid format' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
         // Check Durable Object first - atomic consume operation
@@ -163,7 +159,7 @@ const worker: ExportedHandler<Env> = {
         }));
         
         if (!doResponse.ok) {
-          return json({ error: 'Stash not found', requestId } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
         
         // DO gave permission, now get from KV
@@ -171,7 +167,7 @@ const worker: ExportedHandler<Env> = {
         const data = await env.STASHED_KV.get(key);
         
         if (!data) {
-          return json({ error: 'Stash not found', requestId } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
 
         const parsedData = JSON.parse(data) as DestashResponse;
@@ -195,17 +191,17 @@ const worker: ExportedHandler<Env> = {
         
         // Ensure proper path structure
         if (segments.length !== 2) {
-          return json({ error: 'Malformed path', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Malformed path' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
         const id = segments[1];
         
         // Validate UUID
         if (!id) {
-          return json({ error: 'Missing uuid', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Missing uuid' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         if (!uuidRegex.test(id)) {
-          return json({ error: 'Invalid uuid format', requestId } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Invalid uuid format' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
         // Check Durable Object first - atomic delete operation
@@ -217,7 +213,7 @@ const worker: ExportedHandler<Env> = {
         }));
         
         if (!doResponse.ok) {
-          return json({ error: 'Stash not found', requestId } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
+          return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
         
         // DO confirmed deletion, now clean up KV
@@ -229,19 +225,16 @@ const worker: ExportedHandler<Env> = {
 
 
       // 404 for all other routes
-      return json({ error: 'Not found', requestId } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
+      return json({ error: 'Not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
 
     } catch (error) {
-      // requestId is scoped inside try block, so generate a fallback for catch
-      const fallbackRequestId = crypto.randomUUID();
-      console.error(`[${fallbackRequestId}] Worker Error: ${request.method} ${request.url}`, error);
       return new Response(
-        JSON.stringify({ error: 'Internal server error', requestId: fallbackRequestId } as ErrorResponse),
+        JSON.stringify({ error: 'Internal server error' } as ErrorResponse),
         { 
           status: 500,
           headers: { 
             'Content-Type': 'application/json',
-            ...corsHeaders  // Include CORS headers in error responses too
+            ...corsHeaders
           }
         }
       );
