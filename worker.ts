@@ -249,9 +249,38 @@ export class StasherDO {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     
+    // Skip expiry validation for CREATE requests since they don't have a timestamp yet
+    if (!(request.method === 'POST' && url.pathname === '/create')) {
+      // Phase 1: Reactive expiry validation - check at beginning of non-create requests
+      const createdAt = await this.state.storage.get('created_at');
+      
+      // If no timestamp exists, stash has already been consumed/deleted
+      if (!createdAt) {
+        return new Response(JSON.stringify({ error: 'Gone' }), { status: 410 });
+      }
+      
+      // Calculate expiry: created_at + 10 minutes (600,000 ms)
+      // Note: createdAt is stored as seconds, so convert to ms for comparison
+      const createdAtMs = (createdAt as number) * 1000;
+      const expiryMs = createdAtMs + 600000; // 10 minutes in milliseconds
+      const nowMs = Date.now();
+      
+      // If expired, delete all data and return 410 Gone
+      if (nowMs >= expiryMs) {
+        await this.state.storage.deleteAll();
+        return new Response(JSON.stringify({ error: 'Expired' }), { status: 410 });
+      }
+    }
+    
     if (request.method === 'POST' && url.pathname === '/create') {
       const body: { timestamp: number } = await request.json();
       await this.state.storage.put('created_at', body.timestamp);
+      
+      // Phase 2: Proactive alarm - set alarm for 10 minutes after creation
+      const timestampMs = body.timestamp * 1000; // Convert seconds to milliseconds
+      const alarmTime = timestampMs + 600000; // Add 10 minutes (600,000 ms)
+      await this.state.storage.setAlarm(new Date(alarmTime));
+      
       return new Response(JSON.stringify({ status: 'created' }));
     }
     
@@ -276,6 +305,12 @@ export class StasherDO {
     }
     
     return new Response('Not found', { status: 404 });
+  }
+  
+  // Phase 2: Proactive alarm handler - called automatically by Cloudflare after 10 minutes
+  async alarm(): Promise<void> {
+    // Clean up the DO by deleting all stored data
+    await this.state.storage.deleteAll();
   }
 }
 

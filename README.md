@@ -6,13 +6,18 @@ Cloudflare Worker API backend for the [Stasher CLI](https://github.com/stasher-d
 
 - **Zero-knowledge storage** - Only encrypted ciphertext stored
 - **Guaranteed burn-after-read** - Race condition protection via Durable Objects
-- **10-minute TTL** - All stashes expire automatically
-- **Edge deployment** - Global Cloudflare network
-- **Atomic operations** - Prevents double-retrieval under concurrent access
+- **Hybrid expiry system** - Reactive validation + proactive cleanup
+- **10-minute TTL** - All stashes expire automatically with mathematical guarantees
+- **Edge deployment** - Global Cloudflare network with atomic consistency
+- **Self-destructing gatekeepers** - Durable Objects provide expiry enforcement
 
 ## Architecture
 
-### Race Condition Challenge
+### Design Philosophy: Defense-in-Depth Security
+
+Stasher's architecture is built on **zero-trust principles** with multiple layers of protection. Rather than relying on any single mechanism, the system implements **mathematical guarantees** through layered security controls.
+
+### Challenge 1: Race Condition Protection
 
 The original implementation had a potential race condition with KV's eventual consistency:
 
@@ -21,32 +26,72 @@ The original implementation had a potential race condition with KV's eventual co
 3. Both delete the key and return the secret
 4. **Result**: Secret retrieved twice, violating burn-after-read guarantee
 
-### Solution: Durable Objects for Atomic Control
+### Challenge 2: Expiry Enforcement
 
-The system now uses a hybrid architecture combining **KV for storage** and **Durable Objects for access control**:
+Traditional approaches rely on external TTL mechanisms:
+- KV expires after 10 minutes 
+- But what if the expiry fails?
+- What about clock drift between regions?
+- Can we guarantee expired secrets are never accessible?
+
+### Solution: Hybrid Two-Tier Architecture
+
+The system uses **Durable Objects as self-destructing gatekeepers** combined with **KV for encrypted storage**:
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   POST /enstash │───▶│  Durable Object  │───▶│   KV Storage    │
-│                 │    │  (Create token)  │    │ (Encrypted data)│
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+┌─────────────────┐    ┌──────────────────────────┐    ┌─────────────────┐
+│   POST /enstash │───▶│    Durable Object        │───▶│   KV Storage    │
+│                 │    │ • Store timestamp        │    │ (Encrypted data)│
+│                 │    │ • Set 10-min alarm       │    │  + 10-min TTL   │
+└─────────────────┘    └──────────────────────────┘    └─────────────────┘
 
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   GET /destash  │───▶│  Durable Object  │───▶│   KV Storage    │
-│                 │    │ (Atomic consume) │    │ (Fetch & delete)│
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+┌─────────────────┐    ┌──────────────────────────┐    ┌─────────────────┐
+│   GET /destash  │───▶│    Durable Object        │───▶│   KV Storage    │
+│                 │    │ • Check expiry first     │    │ (Fetch & delete)│
+│                 │    │ • Atomic consume         │    │                 │
+└─────────────────┘    └──────────────────────────┘    └─────────────────┘
+
+                       ┌──────────────────────────┐
+                       │     After 10 minutes     │
+                       │ • Alarm triggers         │
+                       │ • Self-destruct DO       │
+                       │ • Cleanup unused stashes │
+                       └──────────────────────────┘
 ```
 
-**Flow:**
-1. **POST /enstash**: Creates both DO token (unix timestamp) and KV entry (encrypted data)
-2. **GET /destash**: DO atomic consume → if successful, fetch from KV → delete from KV
-3. **DELETE /unstash**: DO atomic delete → cleanup KV entry
+### Dual-Layer Expiry System
 
-**Benefits:**
-- **Race condition eliminated** - DO provides strong consistency per secret ID
-- **Guaranteed single retrieval** - Only first request gets DO permission
-- **Minimal overhead** - DO stores only uuid & UNIX timestamps, KV handles encrypted payloads and ttl
-- **Maintains performance** - Leverages both KV global distribution and DO consistency
+**🔄 Reactive Expiry (Phase 1)**
+- Every DO operation validates expiry **before** any logic
+- `if (now > created_at + 600_000) { await storage.deleteAll(); return 410 }`
+- Immediate cleanup of expired stashes on access
+- Defense against clock drift or TTL failures
+
+**⏰ Proactive Expiry (Phase 2)**  
+- Cloudflare alarms automatically trigger after 10 minutes
+- `await storage.setAlarm(new Date(created_at + 600_000))`
+- Cleanup unused stashes even if never accessed again
+- Resource efficiency and zombie prevention
+
+### Why This Architecture?
+
+**Mathematical Guarantees**
+- **One UUID = One Durable Object** - Perfect isolation per secret
+- **Atomic operations** - Race conditions mathematically impossible
+- **Dual expiry validation** - Expired secrets can never be retrieved
+- **Self-destruction** - Objects clean themselves up automatically
+
+**Zero-Trust Design**
+- Never trust external TTL mechanisms alone
+- Every operation validates expiry independently  
+- Multiple cleanup mechanisms (reactive + proactive + post-consume)
+- Defense-in-depth through layered controls
+
+**⚡ Performance Benefits**
+- **DO overhead minimal** - Only stores timestamp metadata
+- **KV handles heavy lifting** - Encrypted payloads + global distribution
+- **Proactive cleanup** - Prevents resource accumulation
+- **Edge consistency** - Strong guarantees where needed, eventual elsewhere
 
 ## Project Structure
 
