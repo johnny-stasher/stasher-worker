@@ -126,4 +126,4 @@ This API features automated deployment via [stasher-ci](https://github.com/stash
 
 ## License
 
-MIT
+Apache 2.0
