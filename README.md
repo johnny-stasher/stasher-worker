@@ -104,6 +104,21 @@ stasher-api/
 ├── README.md         # Documentation
 └── LICENSE           # MIT License
 ```
+
+## 🚀 Deployment
+
+🚀 **Automated CI/CD Pipeline**
+
+This API features automated deployment via [stasher-ci](https://github.com/stasher-dev/stasher-ci):
+
+- **Automatic Deployment**: Pushes to `main` branch automatically deploy to Cloudflare Workers
+- **Edge Network**: Deployed globally via Cloudflare's edge infrastructure
+- **Build Pipeline**: TypeScript checking, linting, and worker optimization  
+- **Zero Downtime**: Atomic deployments with instant global propagation
+- **Infrastructure**: KV storage + Durable Objects for hybrid consistency model
+
+**Deployment Status**: [![CI/CD Pipeline](https://github.com/stasher-dev/stasher-api/actions/workflows/ci.yml/badge.svg)](https://github.com/stasher-dev/stasher-api/actions/workflows/ci.yml)
+
 ## Related Projects
 
 - **[Stasher CLI](https://github.com/stasher-dev/stasher-cli)** - Terminal version (`npm install -g stasher-cli` or `npx`)
