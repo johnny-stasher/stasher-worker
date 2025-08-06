@@ -102,7 +102,7 @@ stasher-api/
 ├── package.json      # Project metadata
 ├── test.js           # Comprehensive test suite for all scenarios
 ├── README.md         # Documentation
-└── LICENSE           # MIT License
+└── LICENSE           # BUSL-1.1 License
 ```
 
 ## 🚀 Deployment
@@ -126,4 +126,4 @@ This API features automated deployment via [stasher-ci](https://github.com/stash
 
 ## License
 
-Apache 2.0
+BUSL-1.1 - Business Source License with automatic conversion to Apache 2.0 on 2028-08-01
