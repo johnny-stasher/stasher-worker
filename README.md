@@ -105,9 +105,9 @@ stasher-api/
 └── LICENSE           # BUSL-1.1 License
 ```
 
-## 🚀 Deployment
+## Deployment
 
-🚀 **Automated CI/CD Pipeline**
+**Automated CI/CD Pipeline**
 
 This API features automated deployment via [stasher-ci](https://github.com/stasher-dev/stasher-ci):
 
@@ -118,6 +118,58 @@ This API features automated deployment via [stasher-ci](https://github.com/stash
 - **Infrastructure**: KV storage + Durable Objects for hybrid consistency model
 
 **Deployment Status**: [![CI/CD Pipeline](https://github.com/stasher-dev/stasher-api/actions/workflows/ci.yml/badge.svg)](https://github.com/stasher-dev/stasher-api/actions/workflows/ci.yml)
+
+## Cryptographic Verification
+
+**All releases are signed with Cosign** using GitHub OIDC keyless signing and logged to the [Rekor transparency log](https://rekor.sigstore.dev).
+
+### Verify Worker Bundle
+
+The Cloudflare Worker bundle is signed during the release process:
+
+```bash
+# Install cosign (if you don't have it)
+# macOS: brew install cosign
+# Linux: see https://docs.sigstore.dev/cosign/installation/
+
+# Get the latest release version
+VERSION=$(gh release list -R stasher-dev/stasher-api --limit 1 | cut -f1)
+
+# Download checksums and signature
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/checksums.txt"
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/checksums.txt.sig"
+
+# Verify signature
+cosign verify-blob \
+  --certificate-identity-regexp="https://github.com/stasher-dev/stasher-api/.*" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --signature=checksums.txt.sig \
+  checksums.txt
+
+# Verify integrity
+sha256sum -c checksums.txt
+```
+
+### Runtime Verification
+
+Since this is deployed as a Cloudflare Worker, you can verify the deployed API matches the signed source:
+
+```bash
+# Compare deployed API metadata
+curl -s https://stasher-api.johnny.workers.dev/ | jq -r '.version // "version not exposed"'
+
+# Cross-reference with GitHub releases
+gh release list -R stasher-dev/stasher-api
+```
+
+### What This Proves
+
+**Source Integrity** - Worker code matches signed GitHub releases  
+**Build Authenticity** - Code was built by verified GitHub Actions  
+**Supply Chain Security** - All dependencies and build steps are transparent  
+**Deployment Traceability** - Direct path from source to production
+
+**Your secrets deserve verified infrastructure.** 🛡️
 
 ## Related Projects
 
