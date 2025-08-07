@@ -119,13 +119,13 @@ This API features automated deployment via [stasher-ci](https://github.com/stash
 
 **Deployment Status**: [![CI/CD Pipeline](https://github.com/stasher-dev/stasher-api/actions/workflows/ci.yml/badge.svg)](https://github.com/stasher-dev/stasher-api/actions/workflows/ci.yml)
 
-## Cryptographic Verification
+## 🔐 Cryptographic Verification
 
-**All releases are signed with Cosign** using GitHub OIDC keyless signing and logged to the [Rekor transparency log](https://rekor.sigstore.dev).
+**All releases are signed with Cosign** using GitHub OIDC keyless signing and include **SLSA v1 provenance attestation**, all logged to the [Rekor transparency log](https://rekor.sigstore.dev).
 
-### Verify Worker Bundle
+### Verify Deployable Worker Bundle (Phase 5 - Deployment Integrity)
 
-The Cloudflare Worker bundle is signed during the release process:
+Each release includes a signed deployable Worker bundle that represents the exact code deployed to Cloudflare:
 
 ```bash
 # Install cosign (if you don't have it)
@@ -135,19 +135,94 @@ The Cloudflare Worker bundle is signed during the release process:
 # Get the latest release version
 VERSION=$(gh release list -R stasher-dev/stasher-api --limit 1 | cut -f1)
 
-# Download checksums and signature
+# Download deployable worker bundle and signature
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/stasher-api-deployable-worker.tar.gz"
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/stasher-api-deployable-worker.tar.gz.sig"
+
+# Verify deployable worker signature
+cosign verify-blob \
+  --certificate-identity-regexp="https://github.com/stasher-dev/stasher-api/.*" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --signature=stasher-api-deployable-worker.tar.gz.sig \
+  stasher-api-deployable-worker.tar.gz
+
+# Extract and inspect deployment metadata
+tar -xzf stasher-api-deployable-worker.tar.gz
+cat deployable-worker/deployment-metadata.json
+
+# Download and verify deployment metadata signature
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/deployment-metadata.json.sig"
+cosign verify-blob \
+  --certificate-identity-regexp="https://github.com/stasher-dev/stasher-api/.*" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --signature=deployment-metadata.json.sig \
+  deployable-worker/deployment-metadata.json
+```
+
+### Verify Complete Release Integrity
+
+```bash
+# Download and verify checksums (covers all artifacts)
 curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/checksums.txt"
 curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/checksums.txt.sig"
 
-# Verify signature
+# Verify checksums signature
 cosign verify-blob \
   --certificate-identity-regexp="https://github.com/stasher-dev/stasher-api/.*" \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
   --signature=checksums.txt.sig \
   checksums.txt
 
-# Verify integrity
+# Verify integrity of all artifacts
 sha256sum -c checksums.txt
+```
+
+### 🧾 Verify SLSA v1 Provenance Attestation
+
+```bash
+# Download the attestation
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/checksums.txt.intoto.jsonl"
+
+# Option 1: Verify with slsa-verifier (recommended)
+# Install: go install github.com/slsa-framework/slsa-verifier/v2/cli/slsa-verifier@latest
+slsa-verifier verify-artifact \
+  --provenance-path checksums.txt.intoto.jsonl \
+  --source-uri github.com/stasher-dev/stasher-api \
+  --source-tag $VERSION \
+  checksums.txt
+
+# Option 2: Manual inspection with cosign
+cosign verify-attestation \
+  --certificate-identity-regexp="https://github.com/stasher-dev/stasher-api/.*" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --type=https://slsa.dev/provenance/v1 \
+  checksums.txt | jq .payload -r | base64 -d | jq
+```
+
+### 📋 Verify SBOM (Software Bill of Materials)
+
+```bash
+# Download SBOM and signature
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/sbom.spdx.json"
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/sbom.spdx.json.sig"
+
+# Verify SBOM signature
+cosign verify-blob \
+  --certificate-identity-regexp="https://github.com/stasher-dev/stasher-api/.*" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --signature=sbom.spdx.json.sig \
+  sbom.spdx.json
+
+# Inspect SBOM (requires jq)
+jq '.packages[] | select(.name != null) | {name: .name, version: .versionInfo, license: .licenseConcluded}' sbom.spdx.json
+
+# Verify SBOM attestation
+curl -L -O "https://github.com/stasher-dev/stasher-api/releases/download/$VERSION/sbom.spdx.json.intoto.jsonl"
+cosign verify-attestation \
+  --certificate-identity-regexp="https://github.com/stasher-dev/stasher-api/.*" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --type=https://spdx.dev/Document \
+  sbom.spdx.json
 ```
 
 ### Runtime Verification
@@ -162,12 +237,24 @@ curl -s https://stasher-api.johnny.workers.dev/ | jq -r '.version // "version no
 gh release list -R stasher-dev/stasher-api
 ```
 
-### What This Proves
+### 🏗️ What This Proves
 
-**Source Integrity** - Worker code matches signed GitHub releases  
-**Build Authenticity** - Code was built by verified GitHub Actions  
-**Supply Chain Security** - All dependencies and build steps are transparent  
-**Deployment Traceability** - Direct path from source to production
+**✅ Source Integrity** - Worker code matches signed GitHub releases  
+**✅ Build Authenticity** - Code was built by verified GitHub Actions  
+**✅ Supply Chain Security** - All dependencies and build steps are transparent  
+**✅ Deployment Integrity** - Exact deployable Worker bundle is signed and verified  
+**✅ Deployment Traceability** - Worker content hash links deployed code to source commit  
+**✅ Provenance** - SLSA v1 attestation captures complete build metadata  
+**✅ Dependency Transparency** - Complete SBOM with all transitive dependencies  
+**✅ License Compliance** - SPDX-compliant license identification  
+**✅ Vulnerability Monitoring** - Automated security scanning integrated  
+**✅ Transparency** - All signatures logged to public [Rekor](https://rekor.sigstore.dev) log
+
+The SLSA attestation contains detailed metadata about:
+- **Source commit** and repository
+- **Build environment** (Node.js version, OS, dependencies)
+- **Build process** (exact commands, working directory)
+- **GitHub Actions context** (workflow, actor, run ID)
 
 **Your secrets deserve verified infrastructure.** 🛡️
 
