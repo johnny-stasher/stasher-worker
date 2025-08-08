@@ -80,9 +80,10 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Expected Content-Type: application/json' } as ErrorResponse, 415, { 'Cache-Control': 'no-store' });
         }
 
-        // Check raw payload size first
+        // Check raw payload size first (using actual byte length)
         const raw = await request.text();
-        if (raw.length > MAX_PAYLOAD_SIZE) {
+        const rawBytes = new TextEncoder().encode(raw);
+        if (rawBytes.byteLength > MAX_PAYLOAD_SIZE) {
           return json({ error: `Payload too large (max ${MAX_PAYLOAD_SIZE} bytes)` } as ErrorResponse, 413, { 'Cache-Control': 'no-store' });
         }
 
