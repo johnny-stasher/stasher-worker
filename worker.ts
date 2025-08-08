@@ -99,8 +99,8 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Missing required fields: iv, tag, ciphertext' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
-        // Base64 validation regex (RFC 4648)
-        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        // Base64 validation regex (RFC 4648) - enforces proper padding rules
+        const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
         
         // Validate field types and formats
         if (typeof body.iv !== 'string' || typeof body.tag !== 'string' || typeof body.ciphertext !== 'string') {
@@ -301,84 +301,90 @@ export class StasherDO {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     
-    // Skip expiry validation for CREATE requests since they don't have a timestamp yet
-    if (!(request.method === 'POST' && url.pathname === '/create')) {
-      // Phase 1: Reactive expiry validation - check at beginning of non-create requests
-      const createdAt = await this.state.storage.get('created_at');
-      
-      // If no timestamp exists, stash has already been consumed/deleted
-      if (!createdAt) {
-        return new Response(JSON.stringify({ error: 'Gone' }), { status: 410 });
+    // Use blockConcurrencyWhile to prevent races with alarm() method
+    return await this.state.blockConcurrencyWhile(async () => {
+      // Skip expiry validation for CREATE requests since they don't have a timestamp yet
+      if (!(request.method === 'POST' && url.pathname === '/create')) {
+        // Phase 1: Reactive expiry validation - check at beginning of non-create requests
+        const createdAt = await this.state.storage.get('created_at');
+        
+        // If no timestamp exists, stash has already been consumed/deleted
+        if (!createdAt) {
+          return new Response(JSON.stringify({ error: 'Gone' }), { status: 410 });
+        }
+        
+        // Calculate expiry: created_at + 10 minutes (600,000 ms)
+        // Note: createdAt is stored as seconds, so convert to ms for comparison
+        const createdAtMs = (createdAt as number) * 1000;
+        const expiryMs = createdAtMs + 600000; // 10 minutes in milliseconds
+        const nowMs = Date.now();
+        
+        // If expired, delete all data and return 410 Gone
+        if (nowMs >= expiryMs) {
+          await this.state.storage.deleteAll();
+          return new Response(JSON.stringify({ error: 'Expired' }), { status: 410 });
+        }
       }
       
-      // Calculate expiry: created_at + 10 minutes (600,000 ms)
-      // Note: createdAt is stored as seconds, so convert to ms for comparison
-      const createdAtMs = (createdAt as number) * 1000;
-      const expiryMs = createdAtMs + 600000; // 10 minutes in milliseconds
-      const nowMs = Date.now();
-      
-      // If expired, delete all data and return 410 Gone
-      if (nowMs >= expiryMs) {
-        await this.state.storage.deleteAll();
-        return new Response(JSON.stringify({ error: 'Expired' }), { status: 410 });
-      }
-    }
-    
-    if (request.method === 'POST' && url.pathname === '/create') {
-      const body: { timestamp: number } = await request.json();
-      
-      // Validate timestamp is a sane number with reasonable skew tolerance
-      const now = Math.floor(Date.now() / 1000);
-      const maxSkew = 300; // 5 minutes in seconds
-      if (!Number.isInteger(body.timestamp) || 
-          body.timestamp < (now - maxSkew) || 
-          body.timestamp > (now + maxSkew)) {
-        return new Response(JSON.stringify({ error: 'Invalid timestamp' }), { status: 400 });
-      }
-      
-      // Check if already created - prevent replay attacks that could reset alarm
-      const existingTimestamp = await this.state.storage.get('created_at');
-      if (existingTimestamp) {
-        return new Response(JSON.stringify({ error: 'Already created' }), { status: 409 });
+      if (request.method === 'POST' && url.pathname === '/create') {
+        const body: { timestamp: number } = await request.json();
+        
+        // Validate timestamp is a sane number with reasonable skew tolerance
+        const now = Math.floor(Date.now() / 1000);
+        const maxSkew = 300; // 5 minutes in seconds
+        if (!Number.isInteger(body.timestamp) || 
+            body.timestamp < (now - maxSkew) || 
+            body.timestamp > (now + maxSkew)) {
+          return new Response(JSON.stringify({ error: 'Invalid timestamp' }), { status: 400 });
+        }
+        
+        // Check if already created - prevent replay attacks that could reset alarm
+        const existingTimestamp = await this.state.storage.get('created_at');
+        if (existingTimestamp) {
+          return new Response(JSON.stringify({ error: 'Already created' }), { status: 409 });
+        }
+        
+        await this.state.storage.put('created_at', body.timestamp);
+        
+        // Phase 2: Proactive alarm - set alarm for 10 minutes after creation
+        const timestampMs = body.timestamp * 1000; // Convert seconds to milliseconds
+        const alarmTime = timestampMs + 600000; // Add 10 minutes (600,000 ms)
+        await this.state.storage.setAlarm(new Date(alarmTime));
+        
+        return new Response(JSON.stringify({ status: 'created' }));
       }
       
-      await this.state.storage.put('created_at', body.timestamp);
-      
-      // Phase 2: Proactive alarm - set alarm for 10 minutes after creation
-      const timestampMs = body.timestamp * 1000; // Convert seconds to milliseconds
-      const alarmTime = timestampMs + 600000; // Add 10 minutes (600,000 ms)
-      await this.state.storage.setAlarm(new Date(alarmTime));
-      
-      return new Response(JSON.stringify({ status: 'created' }));
-    }
-    
-    if (request.method === 'POST' && url.pathname === '/consume') {
-      const createdAt = await this.state.storage.get('created_at');
-      if (!createdAt) {
-        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+      if (request.method === 'POST' && url.pathname === '/consume') {
+        const createdAt = await this.state.storage.get('created_at');
+        if (!createdAt) {
+          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+        }
+        
+        await this.state.storage.delete('created_at');
+        return new Response(JSON.stringify({ status: 'consumed', created_at: createdAt }));
       }
       
-      await this.state.storage.delete('created_at');
-      return new Response(JSON.stringify({ status: 'consumed', created_at: createdAt }));
-    }
-    
-    if (request.method === 'DELETE') {
-      const createdAt = await this.state.storage.get('created_at');
-      if (!createdAt) {
-        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+      if (request.method === 'DELETE') {
+        const createdAt = await this.state.storage.get('created_at');
+        if (!createdAt) {
+          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+        }
+        
+        await this.state.storage.delete('created_at');
+        return new Response(JSON.stringify({ status: 'deleted' }));
       }
       
-      await this.state.storage.delete('created_at');
-      return new Response(JSON.stringify({ status: 'deleted' }));
-    }
-    
-    return new Response('Not found', { status: 404 });
+      return new Response('Not found', { status: 404 });
+    });
   }
   
   // Phase 2: Proactive alarm handler - called automatically by Cloudflare after 10 minutes
   async alarm(): Promise<void> {
-    // Clean up the DO by deleting all stored data
-    await this.state.storage.deleteAll();
+    // Use blockConcurrencyWhile to prevent races with fetch() method
+    await this.state.blockConcurrencyWhile(async () => {
+      // Clean up the DO by deleting all stored data
+      await this.state.storage.deleteAll();
+    });
   }
 }
 
