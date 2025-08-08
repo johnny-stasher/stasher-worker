@@ -201,6 +201,12 @@ const worker: ExportedHandler<Env> = {
         }));
         
         if (!doResponse.ok) {
+          // Preserve DO status codes: 410 for expired/consumed, 404 for never existed
+          if (doResponse.status === 410) {
+            const errorData = await doResponse.json() as { error?: string };
+            const message = errorData.error === 'Expired' ? 'Stash expired' : 'Stash already consumed';
+            return json({ error: message } as ErrorResponse, 410, { 'Cache-Control': 'no-store' });
+          }
           return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
         
@@ -255,6 +261,12 @@ const worker: ExportedHandler<Env> = {
         }));
         
         if (!doResponse.ok) {
+          // Preserve DO status codes: 410 for expired/consumed, 404 for never existed
+          if (doResponse.status === 410) {
+            const errorData = await doResponse.json() as { error?: string };
+            const message = errorData.error === 'Expired' ? 'Stash expired' : 'Stash already consumed';
+            return json({ error: message } as ErrorResponse, 410, { 'Cache-Control': 'no-store' });
+          }
           return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
         
@@ -317,7 +329,16 @@ export class StasherDO {
     if (request.method === 'POST' && url.pathname === '/create') {
       const body: { timestamp: number } = await request.json();
       
-      // Check if already created (idempotent operation)
+      // Validate timestamp is a sane number with reasonable skew tolerance
+      const now = Math.floor(Date.now() / 1000);
+      const maxSkew = 300; // 5 minutes in seconds
+      if (!Number.isInteger(body.timestamp) || 
+          body.timestamp < (now - maxSkew) || 
+          body.timestamp > (now + maxSkew)) {
+        return new Response(JSON.stringify({ error: 'Invalid timestamp' }), { status: 400 });
+      }
+      
+      // Check if already created - prevent replay attacks that could reset alarm
       const existingTimestamp = await this.state.storage.get('created_at');
       if (existingTimestamp) {
         return new Response(JSON.stringify({ error: 'Already created' }), { status: 409 });
