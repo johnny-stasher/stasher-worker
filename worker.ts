@@ -112,15 +112,15 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Fields must be valid base64' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
-        // Validate field lengths (reasonable maximums)
-        if (body.iv.length > 24) {
-          return json({ error: 'IV too long (max 24 chars)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        // Validate field lengths using actual byte lengths (not UTF-16 code units)
+        if (new TextEncoder().encode(body.iv).byteLength > 24) {
+          return json({ error: 'IV too long (max 24 bytes)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
-        if (body.tag.length > 24) {
-          return json({ error: 'Tag too long (max 24 chars)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        if (new TextEncoder().encode(body.tag).byteLength > 24) {
+          return json({ error: 'Tag too long (max 24 bytes)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
-        if (body.ciphertext.length > 16384) {
-          return json({ error: 'Ciphertext too long (max 16384 chars)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        if (new TextEncoder().encode(body.ciphertext).byteLength > 16384) {
+          return json({ error: 'Ciphertext too long (max 16384 bytes)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
         // Generate UUID
