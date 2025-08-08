@@ -5,6 +5,8 @@
   "main": "worker.ts",
   "scripts": {
     "build": "echo '✓ no build needed'",
+    "lint": "echo '✓ no linting configured'",
+    "test": "echo '✓ no tests configured'",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },

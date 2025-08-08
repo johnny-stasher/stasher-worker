@@ -35,7 +35,7 @@ interface ErrorResponse {
 const worker: ExportedHandler<Env> = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname;
+    const path = url.pathname.replace(/\/+$/, '');
 
     // CORS headers for cross-origin requests from any domain
     const corsHeaders = {
@@ -176,13 +176,12 @@ const worker: ExportedHandler<Env> = {
 
       // GET /destash/<uuid> - retrieve encrypted payload
       if (path.startsWith('/destash/') && request.method === 'GET') {
-        // Extract UUID from path, handling trailing slashes gracefully
-        const match = path.match(/^\/destash\/([^\/]+)\/?$/);
-        if (!match) {
+        const segments = path.split('/');
+        if (segments.length !== 3 || segments[0] !== '' || segments[1] !== 'destash') {
           return json({ error: 'Malformed path' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
-        const id = match[1];
+        const id = segments[2];
         
         // Validate UUID
         if (!id) {
@@ -235,13 +234,12 @@ const worker: ExportedHandler<Env> = {
 
       // DELETE /unstash/<uuid> - manually delete a secret
       if (path.startsWith('/unstash/') && request.method === 'DELETE') {
-        // Extract UUID from path, handling trailing slashes gracefully
-        const match = path.match(/^\/unstash\/([^\/]+)\/?$/);
-        if (!match) {
+        const segments = path.split('/');
+        if (segments.length !== 3 || segments[0] !== '' || segments[1] !== 'unstash') {
           return json({ error: 'Malformed path' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
-        const id = match[1];
+        const id = segments[2];
         
         // Validate UUID
         if (!id) {
