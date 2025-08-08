@@ -309,6 +309,17 @@ export class StasherDO {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     
+    // DO response helper with consistent headers
+    const json = (data: any, status: number = 200): Response =>
+      new Response(JSON.stringify(data), {
+        status,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Pragma': 'no-cache'
+        }
+      });
+    
     // Use blockConcurrencyWhile to prevent races with alarm() method
     return await this.state.blockConcurrencyWhile(async () => {
       // Skip expiry validation for CREATE requests since they don't have a timestamp yet
@@ -318,7 +329,7 @@ export class StasherDO {
         
         // If no timestamp exists, stash has already been consumed/deleted
         if (!createdAt) {
-          return new Response(JSON.stringify({ error: 'Gone' }), { status: 410 });
+          return json({ error: 'Gone' }, 410);
         }
         
         // Calculate expiry: created_at + 10 minutes (600,000 ms)
@@ -330,7 +341,7 @@ export class StasherDO {
         // If expired, delete all data and return 410 Gone
         if (nowMs >= expiryMs) {
           await this.state.storage.deleteAll();
-          return new Response(JSON.stringify({ error: 'Expired' }), { status: 410 });
+          return json({ error: 'Expired' }, 410);
         }
       }
       
@@ -343,13 +354,13 @@ export class StasherDO {
         if (!Number.isInteger(body.timestamp) || 
             body.timestamp < (now - maxSkew) || 
             body.timestamp > (now + maxSkew)) {
-          return new Response(JSON.stringify({ error: 'Invalid timestamp' }), { status: 400 });
+          return json({ error: 'Invalid timestamp' }, 400);
         }
         
         // Check if already created - prevent replay attacks that could reset alarm
         const existingTimestamp = await this.state.storage.get('created_at');
         if (existingTimestamp) {
-          return new Response(JSON.stringify({ error: 'Already created' }), { status: 409 });
+          return json({ error: 'Already created' }, 409);
         }
         
         // Store both timestamp and payload atomically
@@ -361,7 +372,7 @@ export class StasherDO {
         const alarmTime = timestampMs + 600000; // Add 10 minutes (600,000 ms)
         await this.state.storage.setAlarm(new Date(alarmTime));
         
-        return new Response(JSON.stringify({ status: 'created' }));
+        return json({ status: 'created' });
       }
       
       if (request.method === 'POST' && url.pathname === '/consume') {
@@ -369,7 +380,7 @@ export class StasherDO {
         const payload = await this.state.storage.get('payload');
         
         if (!createdAt || !payload) {
-          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+          return json({ error: 'not_found' }, 404);
         }
         
         // Atomically delete both timestamp and payload (burn after reading)
@@ -377,26 +388,23 @@ export class StasherDO {
         await this.state.storage.delete('payload');
         
         // Return the payload directly
-        return new Response(JSON.stringify(payload));
+        return json(payload);
       }
       
       if (request.method === 'POST' && url.pathname === '/delete') {
         const createdAt = await this.state.storage.get('created_at');
         if (!createdAt) {
-          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+          return json({ error: 'not_found' }, 404);
         }
         
         // Delete both timestamp and payload
         await this.state.storage.delete('created_at');
         await this.state.storage.delete('payload');
         
-        return new Response(JSON.stringify({ status: 'deleted' }));
+        return json({ status: 'deleted' });
       }
       
-      return new Response(JSON.stringify({ error: 'Not found' }), { 
-        status: 404,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return json({ error: 'Not found' }, 404);
     });
   }
   
