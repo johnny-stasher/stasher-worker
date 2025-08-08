@@ -175,14 +175,13 @@ const worker: ExportedHandler<Env> = {
 
       // GET /destash/<uuid> - retrieve encrypted payload
       if (path.startsWith('/destash/') && request.method === 'GET') {
-        const segments = path.split('/').filter(Boolean);
-        
-        // Ensure proper path structure
-        if (segments.length !== 2) {
+        // Extract UUID from path, handling trailing slashes gracefully
+        const match = path.match(/^\/destash\/([^\/]+)\/?$/);
+        if (!match) {
           return json({ error: 'Malformed path' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
-        const id = segments[1];
+        const id = match[1];
         
         // Validate UUID
         if (!id) {
@@ -235,14 +234,13 @@ const worker: ExportedHandler<Env> = {
 
       // DELETE /unstash/<uuid> - manually delete a secret
       if (path.startsWith('/unstash/') && request.method === 'DELETE') {
-        const segments = path.split('/').filter(Boolean);
-        
-        // Ensure proper path structure
-        if (segments.length !== 2) {
+        // Extract UUID from path, handling trailing slashes gracefully
+        const match = path.match(/^\/unstash\/([^\/]+)\/?$/);
+        if (!match) {
           return json({ error: 'Malformed path' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
-        const id = segments[1];
+        const id = match[1];
         
         // Validate UUID
         if (!id) {
