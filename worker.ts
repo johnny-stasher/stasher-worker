@@ -99,6 +99,30 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Missing required fields: iv, tag, ciphertext' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
+        // Base64 validation regex (RFC 4648)
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        
+        // Validate field types and formats
+        if (typeof body.iv !== 'string' || typeof body.tag !== 'string' || typeof body.ciphertext !== 'string') {
+          return json({ error: 'Fields must be strings' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        }
+        
+        // Validate base64 format
+        if (!base64Regex.test(body.iv) || !base64Regex.test(body.tag) || !base64Regex.test(body.ciphertext)) {
+          return json({ error: 'Fields must be valid base64' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        }
+        
+        // Validate field lengths (reasonable maximums)
+        if (body.iv.length > 24) {
+          return json({ error: 'IV too long (max 24 chars)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        }
+        if (body.tag.length > 24) {
+          return json({ error: 'Tag too long (max 24 chars)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        }
+        if (body.ciphertext.length > 16384) {
+          return json({ error: 'Ciphertext too long (max 16384 chars)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        }
+
         // Generate UUID
         const id = crypto.randomUUID();
         
