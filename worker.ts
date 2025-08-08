@@ -101,32 +101,49 @@ const worker: ExportedHandler<Env> = {
         // Generate UUID
         const id = crypto.randomUUID();
         
-        // Create Durable Object for this stash
-        const doId = env.STASHER_DO.idFromName(id);
-        const doStub = env.STASHER_DO.get(doId);
-        
-        // Create timestamp record in DO
-        const timestamp = Math.floor(Date.now() / 1000);
-        const doResponse = await doStub.fetch(new Request('https://stasher.internal/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ timestamp })
-        }));
-        
-        if (!doResponse.ok) {
-          return json({ error: 'Failed to create stash record' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
-        }
-        
-        // Store in KV
+        // Prepare data for storage
         const dataToStore = {
           iv: body.iv,
           tag: body.tag,
           ciphertext: body.ciphertext
         };
         
-        // Store with KV namespace prefix and fixed 10-minute TTL
+        // Step 1: Store in KV first (can be safely retried)
         const key = `secret:${id}`;
-        await env.STASHED_KV.put(key, JSON.stringify(dataToStore), { expirationTtl: MAX_TTL });
+        try {
+          await env.STASHED_KV.put(key, JSON.stringify(dataToStore), { expirationTtl: MAX_TTL });
+        } catch (kvError) {
+          return json({ error: 'Failed to store encrypted payload' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
+        }
+        
+        // Step 2: Create Durable Object record (with rollback on failure)
+        const doId = env.STASHER_DO.idFromName(id);
+        const doStub = env.STASHER_DO.get(doId);
+        
+        const timestamp = Math.floor(Date.now() / 1000);
+        try {
+          const doResponse = await doStub.fetch(new Request('https://stasher.internal/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timestamp })
+          }));
+          
+          if (!doResponse.ok) {
+            // Handle idempotency conflict (409) - DO already created, this is actually OK
+            if (doResponse.status === 409) {
+              // DO already exists, but we have KV data - this is a valid race condition resolution
+              return json({ id } as EnstashResponse, 201);
+            }
+            
+            // Other errors - rollback KV
+            await env.STASHED_KV.delete(key);
+            return json({ error: 'Failed to create stash record' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
+          }
+        } catch (doError) {
+          // Rollback: Delete KV entry since DO creation failed
+          await env.STASHED_KV.delete(key);
+          return json({ error: 'Failed to create stash record' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
+        }
 
         return json({ id } as EnstashResponse, 201);
       }
@@ -274,6 +291,13 @@ export class StasherDO {
     
     if (request.method === 'POST' && url.pathname === '/create') {
       const body: { timestamp: number } = await request.json();
+      
+      // Check if already created (idempotent operation)
+      const existingTimestamp = await this.state.storage.get('created_at');
+      if (existingTimestamp) {
+        return new Response(JSON.stringify({ error: 'Already created' }), { status: 409 });
+      }
+      
       await this.state.storage.put('created_at', body.timestamp);
       
       // Phase 2: Proactive alarm - set alarm for 10 minutes after creation
