@@ -1,6 +1,6 @@
 # Stasher API
 
-Cloudflare Worker backend for 
+A Cloudflare Worker backend for 
 
 [Stasher CLI](https://github.com/stasher-dev/stasher-cli) and 
 [Stasher App](https://github.com/stasher-dev/stasher-app).  
