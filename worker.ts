@@ -42,7 +42,8 @@ const worker: ExportedHandler<Env> = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Max-Age': '86400'
+      'Access-Control-Max-Age': '86400',
+      'Vary': 'Origin'
     };
 
     // Handle preflight OPTIONS requests
@@ -157,7 +158,7 @@ const worker: ExportedHandler<Env> = {
             // Handle idempotency conflict (409) - DO already created, this is actually OK
             if (doResponse.status === 409) {
               // DO already exists, but we have KV data - this is a valid race condition resolution
-              return json({ id } as EnstashResponse, 201);
+              return json({ id } as EnstashResponse, 201, { 'Cache-Control': 'no-store' });
             }
             
             // Other errors - rollback KV
@@ -170,7 +171,7 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Failed to create stash record' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
         }
 
-        return json({ id } as EnstashResponse, 201);
+        return json({ id } as EnstashResponse, 201, { 'Cache-Control': 'no-store' });
       }
 
       // GET /destash/<uuid> - retrieve encrypted payload
@@ -272,7 +273,7 @@ const worker: ExportedHandler<Env> = {
         const key = `secret:${id}`;
         await env.STASHED_KV.delete(key);
 
-        return json({ status: 'deleted', id } as UnstashResponse);
+        return json({ status: 'deleted', id } as UnstashResponse, 200, { 'Cache-Control': 'no-store' });
       }
 
 
