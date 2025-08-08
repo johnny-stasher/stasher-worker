@@ -1,8 +1,6 @@
 // Cloudflare Worker environment
 interface Env {
-  STASHED_KV: KVNamespace;
   STASHER_DO: DurableObjectNamespace;
-  GITHUB_TOKEN?: string;
 }
 
 // API request/response types
@@ -67,12 +65,33 @@ const worker: ExportedHandler<Env> = {
           }
         });
 
+      // Base64 decoder with proper error handling
+      function b64ToBytes(s: string): Uint8Array | null {
+        try {
+          // Optionally normalize URL-safe base64 to standard base64
+          // For now, enforce standard base64 only (as per current regex)
+          const bin = atob(s);
+          const out = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) {
+            out[i] = bin.charCodeAt(i);
+          }
+          return out;
+        } catch {
+          return null;
+        }
+      }
+
       // UUID v4 validation regex (aligned with CLI)
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       
       // Constants (aligned with CLI)
       const MAX_TTL = 10 * 60; // 10 minutes in seconds
       const MAX_PAYLOAD_SIZE = 10 * 1024; // 10KB encrypted JSON
+      
+      // AES-GCM crypto constants for proper validation
+      const IV_BYTES = 12;  // 96-bit nonce for AES-GCM
+      const TAG_BYTES = 16; // 128-bit authentication tag
+      const MAX_CIPHERTEXT_BYTES = 16384; // Max ciphertext size in bytes
 
       // POST /enstash - store encrypted payload
       if (path === '/enstash' && request.method === 'POST') {
@@ -100,49 +119,53 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Missing required fields: iv, tag, ciphertext' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
-        // Base64 validation regex (RFC 4648) - enforces proper padding rules
-        const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-        
-        // Validate field types and formats
+        // Validate field types
         if (typeof body.iv !== 'string' || typeof body.tag !== 'string' || typeof body.ciphertext !== 'string') {
           return json({ error: 'Fields must be strings' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
+
+        // Base64 validation regex (RFC 4648) - enforces proper padding rules
+        const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
         
-        // Validate base64 format
+        // Validate base64 format before decoding
         if (!base64Regex.test(body.iv) || !base64Regex.test(body.tag) || !base64Regex.test(body.ciphertext)) {
           return json({ error: 'Fields must be valid base64' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
         
-        // Validate field lengths using actual byte lengths (not UTF-16 code units)
-        if (new TextEncoder().encode(body.iv).byteLength > 24) {
-          return json({ error: 'IV too long (max 24 bytes)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        // Decode and validate actual crypto material lengths
+        const ivBytes = b64ToBytes(body.iv);
+        const tagBytes = b64ToBytes(body.tag);  
+        const ctBytes = b64ToBytes(body.ciphertext);
+        
+        if (!ivBytes || !tagBytes || !ctBytes) {
+          return json({ error: 'Invalid base64 encoding' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
-        if (new TextEncoder().encode(body.tag).byteLength > 24) {
-          return json({ error: 'Tag too long (max 24 bytes)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        
+        // Validate decoded crypto material sizes for AES-GCM
+        if (ivBytes.byteLength !== IV_BYTES) {
+          return json({ error: `IV must be exactly ${IV_BYTES} bytes (96-bit nonce)` } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
-        if (new TextEncoder().encode(body.ciphertext).byteLength > 16384) {
-          return json({ error: 'Ciphertext too long (max 16384 bytes)' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        if (tagBytes.byteLength !== TAG_BYTES) {
+          return json({ error: `Tag must be exactly ${TAG_BYTES} bytes (128-bit auth tag)` } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        }
+        if (ctBytes.byteLength === 0) {
+          return json({ error: 'Ciphertext cannot be empty' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
+        }
+        if (ctBytes.byteLength > MAX_CIPHERTEXT_BYTES) {
+          return json({ error: `Ciphertext too large (max ${MAX_CIPHERTEXT_BYTES} bytes)` } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
         // Generate UUID
         const id = crypto.randomUUID();
         
         // Prepare data for storage
-        const dataToStore = {
+        const payloadData = {
           iv: body.iv,
           tag: body.tag,
           ciphertext: body.ciphertext
         };
         
-        // Step 1: Store in KV first (can be safely retried)
-        const key = `secret:${id}`;
-        try {
-          await env.STASHED_KV.put(key, JSON.stringify(dataToStore), { expirationTtl: MAX_TTL });
-        } catch (kvError) {
-          return json({ error: 'Failed to store encrypted payload' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
-        }
-        
-        // Step 2: Create Durable Object record (with rollback on failure)
+        // Store everything atomically in Durable Object
         const doId = env.STASHER_DO.idFromName(id);
         const doStub = env.STASHER_DO.get(doId);
         
@@ -151,23 +174,18 @@ const worker: ExportedHandler<Env> = {
           const doResponse = await doStub.fetch(new Request('https://stasher.internal/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ timestamp })
+            body: JSON.stringify({ timestamp, payload: payloadData })
           }));
           
           if (!doResponse.ok) {
-            // Handle idempotency conflict (409) - DO already created, this is actually OK
+            // Handle idempotency conflict (409) - DO already created, this is OK
             if (doResponse.status === 409) {
-              // DO already exists, but we have KV data - this is a valid race condition resolution
               return json({ id } as EnstashResponse, 201, { 'Cache-Control': 'no-store' });
             }
             
-            // Other errors - rollback KV
-            await env.STASHED_KV.delete(key);
             return json({ error: 'Failed to create stash record' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
           }
         } catch (doError) {
-          // Rollback: Delete KV entry since DO creation failed
-          await env.STASHED_KV.delete(key);
           return json({ error: 'Failed to create stash record' } as ErrorResponse, 500, { 'Cache-Control': 'no-store' });
         }
 
@@ -191,7 +209,7 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Invalid uuid format' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
-        // Check Durable Object first - atomic consume operation
+        // Atomically consume payload from Durable Object
         const doId = env.STASHER_DO.idFromName(id);
         const doStub = env.STASHER_DO.get(doId);
         
@@ -209,25 +227,8 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
         
-        // DO gave permission, now get from KV
-        const key = `secret:${id}`;
-        const data = await env.STASHED_KV.get(key);
-        
-        if (!data) {
-          return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
-        }
-
-        const parsedData = JSON.parse(data) as DestashResponse;
-
-        // Delete after retrieval (burn after reading)
-        await env.STASHED_KV.delete(key);
-        
-        // Return crypto data
-        const responseData: DestashResponse = {
-          iv: parsedData.iv,
-          tag: parsedData.tag,
-          ciphertext: parsedData.ciphertext
-        };
+        // Extract payload from DO response
+        const responseData = await doResponse.json() as DestashResponse;
 
         return json(responseData, 200, { 'Cache-Control': 'no-store' });
       }
@@ -249,12 +250,12 @@ const worker: ExportedHandler<Env> = {
           return json({ error: 'Invalid uuid format' } as ErrorResponse, 400, { 'Cache-Control': 'no-store' });
         }
 
-        // Check Durable Object first - atomic delete operation
+        // Atomically delete from Durable Object
         const doId = env.STASHER_DO.idFromName(id);
         const doStub = env.STASHER_DO.get(doId);
         
-        const doResponse = await doStub.fetch(new Request('https://stasher.internal/', {
-          method: 'DELETE'
+        const doResponse = await doStub.fetch(new Request('https://stasher.internal/delete', {
+          method: 'POST'
         }));
         
         if (!doResponse.ok) {
@@ -266,10 +267,6 @@ const worker: ExportedHandler<Env> = {
           }
           return json({ error: 'Stash not found' } as ErrorResponse, 404, { 'Cache-Control': 'no-store' });
         }
-        
-        // DO confirmed deletion, now clean up KV
-        const key = `secret:${id}`;
-        await env.STASHED_KV.delete(key);
 
         return json({ status: 'deleted', id } as UnstashResponse, 200, { 'Cache-Control': 'no-store' });
       }
@@ -326,7 +323,7 @@ export class StasherDO {
       }
       
       if (request.method === 'POST' && url.pathname === '/create') {
-        const body: { timestamp: number } = await request.json();
+        const body: { timestamp: number; payload: any } = await request.json();
         
         // Validate timestamp is a sane number with reasonable skew tolerance
         const now = Math.floor(Date.now() / 1000);
@@ -343,7 +340,9 @@ export class StasherDO {
           return new Response(JSON.stringify({ error: 'Already created' }), { status: 409 });
         }
         
+        // Store both timestamp and payload atomically
         await this.state.storage.put('created_at', body.timestamp);
+        await this.state.storage.put('payload', body.payload);
         
         // Phase 2: Proactive alarm - set alarm for 10 minutes after creation
         const timestampMs = body.timestamp * 1000; // Convert seconds to milliseconds
@@ -355,21 +354,30 @@ export class StasherDO {
       
       if (request.method === 'POST' && url.pathname === '/consume') {
         const createdAt = await this.state.storage.get('created_at');
-        if (!createdAt) {
+        const payload = await this.state.storage.get('payload');
+        
+        if (!createdAt || !payload) {
           return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
         }
         
+        // Atomically delete both timestamp and payload (burn after reading)
         await this.state.storage.delete('created_at');
-        return new Response(JSON.stringify({ status: 'consumed', created_at: createdAt }));
+        await this.state.storage.delete('payload');
+        
+        // Return the payload directly
+        return new Response(JSON.stringify(payload));
       }
       
-      if (request.method === 'DELETE') {
+      if (request.method === 'POST' && url.pathname === '/delete') {
         const createdAt = await this.state.storage.get('created_at');
         if (!createdAt) {
           return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
         }
         
+        // Delete both timestamp and payload
         await this.state.storage.delete('created_at');
+        await this.state.storage.delete('payload');
+        
         return new Response(JSON.stringify({ status: 'deleted' }));
       }
       
